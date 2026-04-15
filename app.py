@@ -140,7 +140,8 @@ with tab2:
     )
     st.plotly_chart(fig_vol)
    
-    
+    # Fit normal distribution to get mu and std
+    mu, std = stats.norm.fit(user_returns[sel_stock])
     # Create normal curve line
     x_range = np.linspace(user_returns[sel_stock].min(), user_returns[sel_stock].max(), 100)
     p = stats.norm.pdf(x_range, mu, std)
