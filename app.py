@@ -42,28 +42,43 @@ with st.sidebar.expander("About & Methodology"):
 
 @st.cache_data(ttl=3600)
 def load_multi_data(tickers, start, end):
-    # Ensure ^GSPC is included for the benchmark requirement (Section 2.1.3)
+    # Ensure benchmark is included
     all_tickers = list(set(tickers + ["^GSPC"]))
     try:
-        # auto_adjust=True removes 'Adj Close' and makes 'Close' the adjusted price
-        data = yf.download(all_tickers, start=start, end=end, auto_adjust=True)
+        # 1. Download data
+        # auto_adjust=True handles splits/dividends
+        # actions=False speeds up the download
+        data = yf.download(all_tickers, start=start, end=end, auto_adjust=True, actions=False)
         
         if data.empty:
             return None
         
-        # 2026 Fix: Extract only the 'Close' prices
-        # Because we have multiple tickers, this is a Multi-Index (Price, Ticker)
-        if 'Close' in data.columns:
-            clean_df = data['Close']
+        # 2. Fix the Multi-Index Column Issue
+        # If multiple tickers are downloaded, yfinance returns (Price, Ticker) levels
+        if isinstance(data.columns, pd.MultiIndex):
+            # Select the 'Close' level and flatten
+            if 'Close' in data.columns.levels[0]:
+                clean_df = data['Close']
+            else:
+                # Fallback for different yf versions
+                clean_df = data.iloc[:, data.columns.get_level_values(0) == 'Close']
+                clean_df.columns = clean_df.columns.get_level_values(1)
         else:
-            # Fallback for different yfinance versions
-            clean_df = data.xs('Close', axis=1, level=0) if isinstance(data.columns, pd.MultiIndex) else data
+            # If only one attribute is returned
+            clean_df = data
             
-        # Section 2.1.4: Handling partial data
+        # 3. Clean and Validate (Section 2.1.4)
         clean_df = clean_df.dropna()
+        
+        # 4. Final safety check: ensure the tickers we want actually exist in the result
+        available_tickers = clean_df.columns.tolist()
+        for t in tickers:
+            if t not in available_tickers:
+                st.sidebar.warning(f"Ticker {t} not found or has insufficient data.")
+                
         return clean_df
     except Exception as e:
-        st.error(f"Error downloading data: {e}")
+        st.error(f"Critical Download Error: {e}")
         return None
 
 with st.spinner("Fetching data from Yahoo Finance..."):
