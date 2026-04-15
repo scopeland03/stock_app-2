@@ -119,16 +119,15 @@ with tab1:
     }).T
     st.write("Summary Statistics", stats_df)
 
-# --- TAB 2: RISK ANALYSIS ---
+## --- TAB 2: RISK ANALYSIS ---
 with tab2:
     st.header("Risk & Distribution")
     sel_stock = st.selectbox("Select stock for analysis", user_tickers)
     
-    # --- ADDED: Rolling Volatility (Section 2.3.1) ---
+    # --- Rolling Volatility (Section 2.3.1) ---
     st.subheader(f"Rolling Annualized Volatility: {sel_stock}")
     vol_window = st.slider("Select Rolling Window (Days)", min_value=10, max_value=126, value=30)
     
-    # Calculate rolling vol: std * sqrt(252) for annualization
     rolling_vol = user_returns[sel_stock].rolling(window=vol_window).std() * np.sqrt(252)
     
     fig_vol = go.Figure()
@@ -140,12 +139,25 @@ with tab2:
     )
     st.plotly_chart(fig_vol)
    
-    # Fit normal distribution to get mu and std
+    # --- Histogram & Normal Curve (Section 2.3.2) ---
+    st.subheader(f"Returns Distribution: {sel_stock}")
+    
+    # 1. Math for the curve
     mu, std = stats.norm.fit(user_returns[sel_stock])
-    # Create normal curve line
     x_range = np.linspace(user_returns[sel_stock].min(), user_returns[sel_stock].max(), 100)
     p = stats.norm.pdf(x_range, mu, std)
     
+    # 2. Create the Figure
+    fig_hist = go.Figure()
+    
+    # 3. Add the Histogram bars first
+    fig_hist.add_trace(go.Histogram(
+        x=user_returns[sel_stock],
+        histnorm='probability density',
+        name='Actual Returns'
+    ))
+    
+    # 4. Add the Normal Distribution line
     fig_hist.add_trace(go.Scatter(
         x=x_range, y=p, 
         name='Normal Distribution',
@@ -159,13 +171,13 @@ with tab2:
     )
     st.plotly_chart(fig_hist)
 
-    # Q-Q Plot (Section 2.3.3)
+    # --- Q-Q Plot (Section 2.3.3) ---
+    st.subheader(f"Q-Q Plot: {sel_stock}")
     fig_qq, ax_qq = plt.subplots()
     stats.probplot(user_returns[sel_stock], dist="norm", plot=ax_qq)
-    ax_qq.set_title(f"Q-Q Plot for {sel_stock}")
     st.pyplot(fig_qq)
     
-    # Jarque-Bera Test (Section 2.3.4)
+    # --- Jarque-Bera Test (Section 2.3.4) ---
     jb_stat, p_val = stats.jarque_bera(user_returns[sel_stock])
     st.write(f"Jarque-Bera p-value: {p_val:.4f}")
     if p_val < 0.05:
