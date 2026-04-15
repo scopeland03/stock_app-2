@@ -124,8 +124,39 @@ with tab2:
     st.header("Risk & Distribution")
     sel_stock = st.selectbox("Select stock for analysis", user_tickers)
     
-    # Box Plot (Section 2.3.5)
-    st.plotly_chart(px.box(user_returns, title="Daily Returns Distribution"))
+    # --- ADDED: Rolling Volatility (Section 2.3.1) ---
+    st.subheader(f"Rolling Annualized Volatility: {sel_stock}")
+    vol_window = st.slider("Select Rolling Window (Days)", min_value=10, max_value=126, value=30)
+    
+    # Calculate rolling vol: std * sqrt(252) for annualization
+    rolling_vol = user_returns[sel_stock].rolling(window=vol_window).std() * np.sqrt(252)
+    
+    fig_vol = go.Figure()
+    fig_vol.add_trace(go.Scatter(x=rolling_vol.index, y=rolling_vol, name="Rolling Vol"))
+    fig_vol.update_layout(
+        xaxis_title="Date", 
+        yaxis_title="Annualized Volatility",
+        yaxis_tickformat=".0%"
+    )
+    st.plotly_chart(fig_vol)
+   
+    
+    # Create normal curve line
+    x_range = np.linspace(user_returns[sel_stock].min(), user_returns[sel_stock].max(), 100)
+    p = stats.norm.pdf(x_range, mu, std)
+    
+    fig_hist.add_trace(go.Scatter(
+        x=x_range, y=p, 
+        name='Normal Distribution',
+        line=dict(color='red', width=2)
+    ))
+    
+    fig_hist.update_layout(
+        title=f"Returns Distribution for {sel_stock}",
+        xaxis_title="Daily Return",
+        yaxis_title="Density"
+    )
+    st.plotly_chart(fig_hist)
 
     # Q-Q Plot (Section 2.3.3)
     fig_qq, ax_qq = plt.subplots()
@@ -156,6 +187,8 @@ with tab3:
     vol_a = user_returns[s1].std() * np.sqrt(252)
     vol_b = user_returns[s2].std() * np.sqrt(252)
     correlation = user_returns[s1].corr(user_returns[s2])
+
+    st.write("This curve demonstrates that combining two stocks can result in a portfolio with lower risk than either individual stock due to diversification.")
     
     w_range = np.linspace(0, 1, 100)
     vols = [np.sqrt((w**2 * vol_a**2) + ((1-w)**2 * vol_b**2) + (2*w*(1-w)*vol_a*vol_b*correlation)) for w in w_range]
