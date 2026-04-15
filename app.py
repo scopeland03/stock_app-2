@@ -41,26 +41,27 @@ with st.sidebar.expander("About & Methodology"):
     """)
 
 @st.cache_data(ttl=3600)
-@st.cache_data(ttl=3600)
 def load_multi_data(tickers, start, end):
+    # Ensure ^GSPC is included for the benchmark requirement (Section 2.1.3)
     all_tickers = list(set(tickers + ["^GSPC"]))
     try:
-        # We specify auto_adjust to keep things clean
+        # auto_adjust=True removes 'Adj Close' and makes 'Close' the adjusted price
         data = yf.download(all_tickers, start=start, end=end, auto_adjust=True)
         
         if data.empty:
             return None
-            
-        # If multiple tickers are downloaded, yfinance returns a MultiIndex.
-        # We only want the 'Close' (or 'Adj Close') column.
+        
+        # 2026 Fix: Extract only the 'Close' prices
+        # Because we have multiple tickers, this is a Multi-Index (Price, Ticker)
         if 'Close' in data.columns:
-            data = data['Close']
-        elif 'Adj Close' in data.columns:
-            data = data['Adj Close']
+            clean_df = data['Close']
+        else:
+            # Fallback for different yfinance versions
+            clean_df = data.xs('Close', axis=1, level=0) if isinstance(data.columns, pd.MultiIndex) else data
             
-        # Handle partial data (Section 2.1.4)
-        data = data.dropna()
-        return data
+        # Section 2.1.4: Handling partial data
+        clean_df = clean_df.dropna()
+        return clean_df
     except Exception as e:
         st.error(f"Error downloading data: {e}")
         return None
@@ -152,4 +153,3 @@ with tab3:
     st.plotly_chart(fig_curve)
     
     st.info("Note: The dip in the curve shows that combining assets can lower total risk.")
-    
