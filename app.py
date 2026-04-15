@@ -15,7 +15,7 @@ st.title("Interactive Multi-Stock Analysis Dashboard")
 st.sidebar.header("Configuration")
 
 # Multi-ticker input
-ticker_input = st.sidebar.text_input("Enter 2-5 Tickers (comma separated)", value="AAPL, MSFT, GOOGL").upper().strip()
+ticker_input = st.sidebar.text_input("Enter 2-5 Tickers (comma separated)", value="NVDA, AMD, TSM").upper().strip()
 user_tickers = [t.strip() for t in ticker_input.split(",") if t.strip()]
 
 # Date range with 1-year enforcement
@@ -41,15 +41,24 @@ with st.sidebar.expander("About & Methodology"):
     """)
 
 @st.cache_data(ttl=3600)
+@st.cache_data(ttl=3600)
 def load_multi_data(tickers, start, end):
     all_tickers = list(set(tickers + ["^GSPC"]))
     try:
-        # Download and extract Adjusted Close
-        data = yf.download(all_tickers, start=start, end=end)
-        if isinstance(data.columns, pd.MultiIndex):
-            data = data['Adj Close']
+        # We specify auto_adjust to keep things clean
+        data = yf.download(all_tickers, start=start, end=end, auto_adjust=True)
         
-        # Section 2.1.4: Handle partial data by dropping NaNs
+        if data.empty:
+            return None
+            
+        # If multiple tickers are downloaded, yfinance returns a MultiIndex.
+        # We only want the 'Close' (or 'Adj Close') column.
+        if 'Close' in data.columns:
+            data = data['Close']
+        elif 'Adj Close' in data.columns:
+            data = data['Adj Close']
+            
+        # Handle partial data (Section 2.1.4)
         data = data.dropna()
         return data
     except Exception as e:
@@ -143,3 +152,4 @@ with tab3:
     st.plotly_chart(fig_curve)
     
     st.info("Note: The dip in the curve shows that combining assets can lower total risk.")
+    
