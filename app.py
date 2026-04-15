@@ -201,7 +201,7 @@ with tab3:
     vol_b = user_returns[s2].std() * np.sqrt(252)
     correlation = user_returns[s1].corr(user_returns[s2])
 
-    st.write("This curve demonstrates that combining two stocks can result in a portfolio with lower risk than either individual stock due to diversification.")
+   
     
     w_range = np.linspace(0, 1, 100)
     vols = [np.sqrt((w**2 * vol_a**2) + ((1-w)**2 * vol_b**2) + (2*w*(1-w)*vol_a*vol_b*correlation)) for w in w_range]
