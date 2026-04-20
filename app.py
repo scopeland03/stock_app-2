@@ -193,7 +193,7 @@ with t3:
     chart_placeholder.plotly_chart(fig_curve, use_container_width=True)
 
     st.info(f"""
-    **Understanding Diversification:** Combining {s1} and {s2} creates a portfolio with a specific risk-return profile. 
+    **Understanding Diversification:** Combining {stock_a} and {stock_b} creates a portfolio with a specific risk-return profile. 
     If the correlation ({rho:.2f}) is less than 1, the curve dips, showing that the portfolio volatility can be lower 
     than the weighted average of the individual stocks.
     """)
