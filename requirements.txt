@@ -5,4 +5,4 @@ numpy
 plotly
 scipy
 matplotlib
-statsmodel
+statsmodels
