@@ -31,9 +31,10 @@ if len(tickers) < 2 or len(tickers) > 5:
 
 with st.sidebar.expander("About & Methodology"):
     st.write("""
-    **Data Source:** Yahoo Finance.
+    **This Streamlit application provides an interactive quantitative risk dashboard that analyzes stock performance, return distributions, and portfolio diversification through cumulative wealth indexing, normality testing, and two-asset volatility modeling.
     **Returns:** Simple arithmetic daily returns.
-    **Annualization:** 252 trading days.
+      **Annualization:** 252 trading days.
+    **Data Source:** Yahoo Finance.
     """)
 
 # 3. DATA ENGINE
