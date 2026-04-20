@@ -8,173 +8,355 @@ import matplotlib.pyplot as plt
 from scipy import stats
 from datetime import date, timedelta
 
-# 1. APPLICATION SETUP
-st.set_page_config(page_title="Quant Analysis Pro", layout="wide")
-st.title("Interactive Stock Analysis Dashboard")
+# 1. SETUP & CONFIG
+st.set_page_config(page_title="Quant Analytics Pro", layout="wide")
+st.title("Financial Risk & Portfolio Analysis")
 
-# 2. SIDEBAR CONFIGURATION (Section 2.1)
-st.sidebar.header("Configuration")
-ticker_input = st.sidebar.text_input("Enter 2-5 Tickers (comma separated)", value="AAPL, MSFT, NVDA").upper()
-user_tickers = [t.strip() for t in ticker_input.split(",") if t.strip()]
+# 2. SIDEBAR PARAMETERS & METHODOLOGY
+st.sidebar.header("Parameters")
 
+# Date Validation: Enforce 1-year minimum range
 start_date = st.sidebar.date_input("Start Date", value=date.today() - timedelta(days=365))
 end_date = st.sidebar.date_input("End Date", value=date.today())
 
-# Methodology Expander (Section 3.5)
-with st.sidebar.expander("Methodology & Assumptions"):
-    st.write("- **Annualization:** 252 trading days.")
-    st.write("- **Returns:** Simple arithmetic (pct_change).")
-    st.write("- **Benchmark:** S&P 500 (^GSPC).")
-    st.write("- **Source:** Yahoo Finance Adjusted Close.")
-
-# Input Validation (Section 2.1.1 & 2.1.2)
-if len(user_tickers) < 2 or len(user_tickers) > 5:
-    st.sidebar.error("Error: Please enter between 2 and 5 tickers.")
-    st.stop()
 if (end_date - start_date).days < 365:
     st.sidebar.error("Error: Date range must be at least 1 year.")
     st.stop()
 
-# 3. DATA ENGINE (Section 2.1.3 & 4.1)
-@st.cache_data(ttl=3600)
-def load_quant_data(tickers, start, end):
-    all_tickers = list(set(tickers + ["^GSPC"]))
-    try:
-        # auto_adjust=True accounts for dividends/splits
-        data = yf.download(all_tickers, start=start, end=end, auto_adjust=True)
-        if data.empty: return None
-        
-        # Handle yfinance Multi-Index structure
-        df = data['Close'] if isinstance(data.columns, pd.MultiIndex) else data
-        
-        # Partial Data Handling (Section 2.1.4): Truncate to overlapping range
-        return df.dropna()
-    except Exception as e:
-        st.error(f"Download Error: {e}")
-        return None
+ticker_input = st.sidebar.text_input("Tickers (2-5, comma separated)", value="AAPL, MSFT, NVDA").upper()
+tickers = [t.strip() for t in ticker_input.split(",") if t.strip()]
 
-with st.spinner("Processing Financial Data..."):
-    df_raw = load_quant_data(user_tickers, start_date, end_date)
-
-if df_raw is None:
+# Ticker Count Validation
+if len(tickers) < 2 or len(tickers) > 5:
+    st.sidebar.warning("Please enter between 2 and 5 tickers.")
     st.stop()
 
-# 4. MATH CALCULATIONS (Section 7.1)
-returns = df_raw.pct_change().dropna()
-bench_ret = returns["^GSPC"]
-stock_ret = returns[user_tickers]
+with st.sidebar.expander("About & Methodology"):
+    st.write("""
+    **Data Source:** Yahoo Finance (Adjusted Closing Prices).
+    **Returns:** Simple arithmetic daily returns.
+    **Annualization:** Calculations assume 252 trading days.
+    **Benchmark:** S&P 500 (^GSPC) used for comparison.
+    """)
 
-# --- LAYOUT (Section 3.1) ---
-tab1, tab2, tab3 = st.tabs(["Price & Returns", "Risk Analysis", "Portfolio Explorer"])
+# 3. ROBUST DATA ENGINE
+@st.cache_data
+def get_cleaned_data(tkrs, start, end):
+    all_tkrs = list(set(tkrs + ["^GSPC"]))
+    try:
+        raw_df = yf.download(all_tkrs, start=start, end=end, auto_adjust=True)['Close']
+    except Exception as e:
+        return None, f"Download failed: {str(e)}"
 
-# --- TAB 1: PRICE & RETURNS (Section 2.2) ---
-with tab1:
-    st.header("Price & Return Analysis")
+    if raw_df.empty:
+        return None, "No data found for the selected tickers/dates."
+
+    # Identify failed tickers (those not in columns or entirely NaN)
+    missing_tkrs = [t for t in all_tkrs if t not in raw_df.columns or raw_df[t].isna().all()]
+    if missing_tkrs:
+        return None, f"Failed to download data for: {', '.join(missing_tkrs)}"
+
+    # 5% Missing Data Rule
+    valid_cols = []
+    for col in raw_df.columns:
+        pct_missing = raw_df[col].isna().mean()
+        if pct_missing > 0.05:
+            st.warning(f"Dropping {col}: More than 5% missing data ({pct_missing:.2%}).")
+        else:
+            valid_cols.append(col)
     
-    # 2.2.1 Price Chart with Multi-Select
-    show_bench = st.checkbox("Show S&P 500 Benchmark on Price Chart", value=False)
-    plot_cols = user_tickers + (["^GSPC"] if show_bench else [])
-    st.line_chart(df_raw[plot_cols])
+    # Truncate to overlapping range (dropna handles the alignment)
+    df = raw_df[valid_cols].dropna()
+    
+    if df.empty:
+        return None, "Insufficient overlapping data across selected assets."
+        
+    return df, None
 
-    # 2.2.3 Summary Stats (Includes Benchmark)
+with st.spinner("Fetching and processing market data..."):
+    df_raw, error_msg = get_cleaned_data(tickers, start_date, end_date)
+
+if error_msg:
+    st.error(error_msg)
+    st.stop()
+
+# Calculations
+returns = df_raw.pct_change().dropna()
+stock_list = [t for t in tickers if t in returns.columns]
+stock_rets = returns[stock_list]
+bench_rets = returns["^GSPC"]
+
+# 4. TABS
+t1, t2, t3 = st.tabs(["Performance Summary", "Risk & Normality", "Correlation & Portfolio"])
+
+# TAB 1: PERFORMANCE & INTERACTIVE PRICE CHART
+with t1:
+    st.subheader("Adjusted Closing Prices")
+    selected_display = st.multiselect("Select stocks to view:", stock_list, default=stock_list)
+    if selected_display:
+        fig_price = px.line(df_raw[selected_display], 
+                            labels={"value": "Price (USD)", "Date": "Timeline"},
+                            title="Adjusted Close Over Time")
+        st.plotly_chart(fig_price, use_container_width=True)
+
     st.subheader("Summary Statistics (Annualized)")
+    # Expanded Stats: Return, Vol, Skew, Kurtosis, Min, Max
     stats_df = pd.DataFrame({
-        "Ann. Return": returns.mean() * 252,
-        "Ann. Volatility": returns.std() * np.sqrt(252),
+        "Annualized Return": returns.mean() * 252,
+        "Annualized Vol": returns.std() * np.sqrt(252),
         "Skewness": returns.skew(),
         "Kurtosis": returns.kurtosis(),
-        "Min Daily": returns.min(),
-        "Max Daily": returns.max()
+        "Min Daily Return": returns.min(),
+        "Max Daily Return": returns.max()
     }).T
-    st.dataframe(stats_df.style.format("{:.4f}"))
-
-    # 2.2.4 Wealth Index Chart
-    st.subheader("Growth of $10,000 (Wealth Index)")
-    wealth = (1 + stock_ret).cumprod() * 10000
-    wealth["S&P 500"] = (1 + bench_ret).cumprod() * 10000
-    wealth["Equal-Weight Portfolio"] = (1 + stock_ret.mean(axis=1)).cumprod() * 10000
-    st.line_chart(wealth)
-
-# --- TAB 2: RISK ANALYSIS (Section 2.3) ---
-with tab2:
-    st.header("Risk & Distribution Analysis")
-    sel_stock = st.selectbox("Select Asset for Detailed Risk Analysis", user_tickers)
+    st.dataframe(stats_df.style.format("{:.4f}"), use_container_width=True)
+    # CUMULATIVE WEALTH INDEX (Professor Requirement)
+    st.subheader("Cumulative Wealth Index ($10,000 Investment)")
     
-    # 2.3.1 Rolling Volatility
-    vol_win = st.slider("Rolling Volatility Window (Days)", 20, 126, 60)
-    st.line_chart(stock_ret[sel_stock].rolling(vol_win).std() * np.sqrt(252))
-
-    # 2.3.2 & 2.3.3 Distribution Toggle
-    view = st.radio("Distribution View", ["Histogram + Normal Curve", "Q-Q Plot"], horizontal=True)
+    # Calculate Equal-Weight Portfolio returns
+    ew_portfolio_rets = stock_rets.mean(axis=1)
     
-    if view == "Histogram + Normal Curve":
-        mu, std = stats.norm.fit(stock_ret[sel_stock])
-        x = np.linspace(stock_ret[sel_stock].min(), stock_ret[sel_stock].max(), 100)
-        fig_hist = go.Figure()
-        fig_hist.add_trace(go.Histogram(x=stock_ret[sel_stock], histnorm='probability density', name='Actual Returns'))
-        fig_hist.add_trace(go.Scatter(x=x, y=stats.norm.pdf(x, mu, std), name='Normal Curve', line=dict(color='red')))
-        fig_hist.update_layout(title=f"Return Distribution: {sel_stock}", xaxis_title="Daily Return", yaxis_title="Density")
-        st.plotly_chart(fig_hist)
+    # Combine all assets for the wealth index calculation
+    wealth_rets = returns.copy()
+    wealth_rets["Equal-Weight Portfolio"] = ew_portfolio_rets
+    
+    # Wealth Index Formula: 10,000 * cumulative product of (1 + returns)
+    wealth_index = (1 + wealth_rets).cumprod() * 10000
+    
+    fig_wealth = px.line(wealth_index, 
+                         labels={"value": "Portfolio Value ($)", "Date": "Timeline"},
+                         title="Growth of $10,000 Investment")
+    st.plotly_chart(fig_wealth, use_container_width=True)
+
+# TAB 2: RISK & NORMALITY
+with t2:
+# Assuming 'stock_rets' is a DataFrame of daily simple arithmetic returns 
+# for the user-selected stocks.
+
+    st.header ("Risk and Distribution Analysis")
+
+# Layout for controls
+col_ctrl, col_display = st.columns([1, 3])
+
+with col_ctrl:
+    # Requirement: User selects a specific stock for detailed analysis
+    target_stock = st.selectbox("Select a stock for distribution analysis:", stock_rets.columns)
+    
+    # Requirement: Toggle/Tab to switch between Histogram and Q-Q Plot
+    plot_type = st.radio("Select Plot Type:", ["Distribution Plot", "Q-Q Plot"])
+    
+   
+   
+# 1. ROLLING VOLATILITY CHART WITH WINDOW SLIDER
+st.subheader("1. Rolling Volatility")
+
+# Requirement: User must be able to adjust window length using a slider or select box
+vol_window = st.select_slider(
+    "Select Rolling Window Length (Days):",
+    options=[30, 60, 90],
+    value=60,
+    help="Adjust the window to see short-term vs long-term volatility trends."
+)
+
+# Calculation: Annualized Rolling Volatility = Daily Std Dev * sqrt(252)
+rolling_vol = stock_rets.rolling(window=vol_window).std() * np.sqrt(252)
+
+# Requirement: Chart must have a title and labeled axes
+fig_vol = px.line(
+    rolling_vol,
+    title=f"{vol_window}-Day Rolling Annualized Volatility",
+    labels={"value": "Annualized Volatility", "Date": "Timeline"},
+    template="plotly_white"
+)
+
+# Requirement: All series on a single chart with a legend
+fig_vol.update_layout(legend_title_text='Tickers')
+
+st.plotly_chart(fig_vol, use_container_width=True)
+
+# 2. DISTRIBUTION PLOT
+if plot_type == "Distribution Plot":
+    # Requirement: Histogram of daily returns
+    # Requirement: Overlay with fitted normal distribution curve using scipy.stats
+    mu, std = stats.norm.fit(stock_rets[target_stock])
+    
+    fig_dist = px.histogram(
+        stock_rets, 
+        x=target_stock, 
+        nbins=50, 
+        histnorm='probability density',
+        title=f"Daily Return Distribution: {target_stock}",
+        labels={target_stock: "Daily Return"}
+    )
+    
+    # Generate the normal curve line
+    x_range = np.linspace(stock_rets[target_stock].min(), stock_rets[target_stock].max(), 100)
+    y_pdf = stats.norm.pdf(x_range, mu, std)
+    
+    fig_dist.add_scatter(x=x_range, y=y_pdf, name="Normal Fit", line=dict(color='red', width=3))
+    st.plotly_chart(fig_dist, use_container_width=True)
+
+# 3. Q-Q PLOT
+    target = st.selectbox("Select stock for Risk Analysis", stock_list)
+    # Requirement: Toggle/Tab for Histogram vs Q-Q
+    risk_view = st.radio("Display Mode", ["Histogram", "Q-Q Plot"])
+    
+    if risk_view == "Histogram":
+        # Requirement: Histogram with fitted normal curve
+        mu, std = stats.norm.fit(stock_rets[target])
+        fig_hist = px.histogram(stock_rets, x=target, nbins=50, histnorm='probability density')
+        x_axis = np.linspace(stock_rets[target].min(), stock_rets[target].max(), 100)
+        fig_hist.add_scatter(x=x_axis, y=stats.norm.pdf(x_axis, mu, std), name="Normal Fit", line=dict(color='red'))
+        st.plotly_chart(fig_hist, use_container_width=True)
     else:
-        fig_qq, ax_qq = plt.subplots()
-        stats.probplot(stock_ret[sel_stock], dist="norm", plot=ax_qq)
-        ax_qq.set_title(f"Q-Q Plot: {sel_stock}")
+        # Requirement: Q-Q Plot using scipy.stats.probplot
+        fig_qq, ax = plt.subplots()
+        stats.probplot(stock_rets[target], dist="norm", plot=ax)
         st.pyplot(fig_qq)
 
-    # 2.3.4 Normality Test
-    jb_stat, p_val = stats.jarque_bera(stock_ret[sel_stock])
-    st.write(f"**Jarque-Bera Stat:** {jb_stat:.2f} | **p-value:** {p_val:.4f}")
-    if p_val < 0.05:
-        st.error("Rejects normality (p < 0.05)")
-    else:
-        st.success("Fails to reject normality (p >= 0.05)")
+# 4. NORMALITY TEST (Jarque-Bera)
+# Requirement: Display JB stat and p-value near the plot
+jb_stat, jb_p = stats.jarque_bera(stock_rets[target_stock])
 
-    # 2.3.5 Box Plot
-    st.subheader("Comparison of Return Distributions")
-    st.plotly_chart(px.box(stock_ret, title="Daily Returns Box Plot"))
+st.write(f"**Jarque-Bera Statistic:** {jb_stat:.4f}")
+st.write(f"**p-value:** {jb_p:.4f}")
 
-# --- TAB 3: CORRELATION & DIVERSIFICATION (Section 2.4) ---
-with tab3:
-    st.header("Correlation & Diversification")
-    
-    # 2.4.1 Diverging Heatmap
-    st.subheader("Pairwise Correlation Matrix")
-    fig_heat = px.imshow(stock_ret.corr(), text_auto=True, color_continuous_scale='RdBu_r', range_color=[-1, 1])
-    st.plotly_chart(fig_heat)
+# Requirement: Brief message indicating if test rejects normality at 5% level
+if jb_p < 0.05:
+    st.error("Result: Rejects normality (p < 0.05)")
+else:
+    st.success("Result: Fails to reject normality (p >= 0.05)")
 
-    # 2.4.2 Scatter Plot
-    st.subheader("Scatter Analysis of Returns")
-    s_x = st.selectbox("Stock X", user_tickers, index=0)
-    s_y = st.selectbox("Stock Y", user_tickers, index=1)
-    st.plotly_chart(px.scatter(stock_ret, x=s_x, y=s_y, trendline="ols", title=f"{s_x} vs {s_y} Daily Returns"))
+st.divider()
 
-    # 2.4.3 Rolling Correlation
-    st.subheader("Rolling Correlation Over Time")
-    c_win = st.slider("Correlation Window (Days)", 20, 126, 60)
-    st.line_chart(stock_ret[s_x].rolling(c_win).corr(stock_ret[s_y]))
 
-    # 2.4.4 Two-Asset Portfolio Explorer
-    st.divider()
-    st.subheader("Two-Asset Portfolio Explorer")
-    w_a = st.slider(f"Weight in {s_x}", 0.0, 1.0, 0.5)
-    
-    # Portfolio Math (Section 7.1)
-    r1, r2 = stock_ret[s_x].mean() * 252, stock_ret[s_y].mean() * 252
-    v1, v2 = stock_ret[s_x].std() * np.sqrt(252), stock_ret[s_y].std() * np.sqrt(252)
-    cov_12 = stock_ret[[s_x, s_y]].cov().iloc[0,1] * 252
-    
-    curr_ret = (w_a * r1) + ((1-w_a) * r2)
-    curr_vol = np.sqrt((w_a**2 * v1**2) + ((1-w_a)**2 * v2**2) + (2 * w_a * (1-w_a) * cov_12))
-    
-    c_met1, c_met2 = st.columns(2)
-    c_met1.metric("Current Portfolio Ann. Return", f"{curr_ret:.2%}")
-    c_met2.metric("Current Portfolio Ann. Volatility", f"{curr_vol:.2%}")
+# 5. BOX PLOT
+# Requirement: Display a box plot comparing daily return distributions of all selected stocks side by side on a single chart.
 
-    # The Volatility Curve
-    ws = np.linspace(0, 1, 100)
-    vs = [np.sqrt((w**2 * v1**2) + ((1-w)**2 * v2**2) + (2 * w * (1-w) * cov_12)) for w in ws]
-    fig_eff = px.line(x=ws, y=vs, labels={'x': f'Weight in {s_x}', 'y': 'Ann. Volatility'}, title="Diversification Volatility Curve")
-    fig_eff.add_scatter(x=[w_a], y=[curr_vol], name="Current Allocation", marker=dict(size=12, color='red'))
-    st.plotly_chart(fig_eff)
-    
-    st.info("**Rubric Insight:** The curve 'dips' below individual stocks' volatilities because the correlation is less than 1. This illustrates how combining assets reduces total risk.")
+st.subheader("Distribution Spread (Box Plot)")
+
+# Requirement: Every chart must have a title and labeled axes.
+fig_box = px.box(
+    stock_rets, 
+    title="Daily Return Spread Comparison",
+    labels={
+        "value": "Daily Simple Arithmetic Return", 
+        "variable": "Stock Ticker"
+    },
+    template="plotly_white"
+)
+
+# Requirement: All series on a single chart with a legend.
+fig_box.update_layout(
+    showlegend=True,
+    legend_title_text='Tickers'
+)
+
+st.plotly_chart(fig_box, use_container_width=True)
+
+# TAB 3: CORRELATION & PORTFOLIO EXPLORER
+with t3:
+    st.header("Correlation & Portfolio Explorer")
+
+# 1. CORRELATION HEATMAP
+# Requirement: Pairwise correlation matrix, annotated cells, diverging scale
+st.subheader("1. Correlation Heatmap")
+corr_matrix = stock_rets.corr()
+fig_heat = px.imshow(
+    corr_matrix,
+    text_auto=".2f",
+    color_continuous_scale='RdBu_r',
+    range_color=[-1, 1],
+    title="Annotated Pairwise Correlation Matrix",
+    labels=dict(color="Correlation")
+)
+st.plotly_chart(fig_heat, use_container_width=True)
+
+st.divider()
+
+# 2. SCATTER PLOT & 3. ROLLING CORRELATION
+# Requirement: User selects two stocks for movement visualization
+st.subheader("2. & 3. Asset Co-movement")
+col_s1, col_s2 = st.columns(2)
+with col_s1:
+    stock_a = st.selectbox("Select Asset A", stock_rets.columns, index=0, key="t3_s1")
+with col_s2:
+    stock_b = st.selectbox("Select Asset B", stock_rets.columns, index=1, key="t3_s2")
+
+# Scatter Plot
+fig_scatter = px.scatter(
+    stock_rets, x=stock_a, y=stock_b, trendline="ols",
+    title=f"Daily Return Scatter: {stock_a} vs {stock_b}",
+    labels={stock_a: f"{stock_a} Return", stock_b: f"{stock_b} Return"}
+)
+st.plotly_chart(fig_scatter, use_container_width=True)
+
+# Rolling Correlation
+# Requirement: Adjustable rolling window length
+roll_corr_window = st.select_slider("Rolling Correlation Window (Days)", options=[30, 60, 90], value=60)
+rolling_corr = stock_rets[stock_a].rolling(window=roll_corr_window).corr(stock_rets[stock_b])
+fig_roll_corr = px.line(
+    rolling_corr,
+    title=f"{roll_corr_window}-Day Rolling Correlation: {stock_a} vs {stock_b}",
+    labels={"value": "Correlation", "Date": "Timeline"}
+)
+st.plotly_chart(fig_roll_corr, use_container_width=True)
+
+st.divider()
+
+# 4. TWO-ASSET PORTFOLIO EXPLORER
+st.subheader("4. Two-Asset Portfolio Explorer")
+
+# Pre-calculations for the Volatility Curve
+# Annualization uses 252 trading days
+mu_a, mu_b = stock_rets[stock_a].mean() * 252, stock_rets[stock_b].mean() * 252
+std_a, std_b = stock_rets[stock_a].std() * np.sqrt(252), stock_rets[stock_b].std() * np.sqrt(252)
+rho = stock_rets[stock_a].corr(stock_rets[stock_b])
+
+# Generate the Curve Data
+w_range = np.linspace(0, 1, 101)
+vols_range = [
+    np.sqrt((w**2 * std_a**2) + ((1-w)**2 * std_b**2) + (2 * w * (1-w) * std_a * std_b * rho)) 
+    for w in w_range
+]
+
+# Portfolio Weight Slider (Placed at the bottom as requested)
+# Requirement: Slider sets weight on Stock A from 0% to 100%
+weight_a_pct = st.slider(f"Adjust Weight on {stock_a} (%)", 0.0, 100.0, 50.0)
+weight_a = weight_a_pct / 100.0
+weight_b = 1.0 - weight_a
+
+# Dynamic Metrics
+# Requirement: Display annualized return and volatility for current weight
+curr_ret = (weight_a * mu_a) + (weight_b * mu_b)
+curr_vol = np.sqrt((weight_a**2 * std_a**2) + (weight_b**2 * std_b**2) + (2 * weight_a * weight_b * std_a * std_b * rho))
+
+m1, m2 = st.columns(2)
+m1.metric("Annualized Portfolio Return", f"{curr_ret:.2%}")
+m2.metric("Annualized Portfolio Volatility", f"{curr_vol:.2%}")
+
+# Volatility Curve Chart
+# Requirement: Plot vol (y) against weight (x). Mark current position
+fig_curve = go.Figure()
+fig_curve.add_trace(go.Scatter(x=w_range * 100, y=vols_range, name="Volatility Curve", line=dict(color='blue')))
+fig_curve.add_trace(go.Scatter(
+    x=[weight_a_pct], y=[curr_vol], 
+    mode='markers', marker=dict(size=14, color='red', symbol='x'), 
+    name="Current Allocation"
+))
+
+fig_curve.update_layout(
+    title=f"Volatility Curve: {stock_a} & {stock_b}",
+    xaxis_title=f"Weight in {stock_a} (%)",
+    yaxis_title="Annualized Volatility",
+    template="plotly_white"
+)
+st.plotly_chart(fig_curve, use_container_width=True)
+
+# Diversification Description
+# Requirement: Brief description explaining the "dip" and correlation
+st.info(f"""
+**The Diversification Effect:** Combining these assets produces a portfolio with lower volatility than the weighted 
+average of the two. This effect is driven by the correlation (**{rho:.2f}**) between {stock_a} and {stock_b}. 
+When correlation is less than 1, the curve dips, allowing for risk reduction.
+""")
